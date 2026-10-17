@@ -1,14 +1,16 @@
 """MCP server exposing the Telescopius API as read-only planning tools."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import ToolAnnotations
 
 from .client import TelescopiusClient
 from .compact import compact_targets, compact_weather
 from .config import Config, load_config
+from .framing import FramingBrowser, Rig, parse_pair
 
 mcp = MCPServer("telescopius")
 
@@ -17,6 +19,7 @@ _READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 
 _config: Config | None = None
 _client: TelescopiusClient | None = None
+_framing: FramingBrowser | None = None
 
 
 def _get() -> tuple[Config, TelescopiusClient]:
@@ -25,6 +28,13 @@ def _get() -> tuple[Config, TelescopiusClient]:
         _config = load_config()
         _client = TelescopiusClient(_config.api_key)
     return _config, _client
+
+
+def _browser() -> FramingBrowser:
+    global _framing
+    if _framing is None:
+        _framing = FramingBrowser()
+    return _framing
 
 
 def _where(lat: float | None, lon: float | None, timezone: str | None) -> dict:
@@ -135,6 +145,60 @@ async def target_info(name: str, date: str | None = None, ephemeris: str | None 
     if not payload.get("page_results"):
         payload = await client.get("/targets/search", {**base, "name_exact": False})
     return compact_targets(payload)
+
+
+def _rig(focal_mm: float | None, sensor_mm: str | None, sensor_px: str | None) -> Rig:
+    """Per-call overrides on top of the configured default rig; loud if neither gives one."""
+    config, _ = _get()
+    focal = focal_mm or config.focal_mm
+    sensor = sensor_mm or config.sensor_mm
+    if not focal or not sensor:
+        raise ValueError("No rig: pass focal_mm and sensor_mm, or set TELESCOPIUS_FOCAL_MM and "
+                         "TELESCOPIUS_SENSOR_MM.")
+    w_mm, h_mm = parse_pair(sensor)
+    px = sensor_px or (None if sensor_mm else config.sensor_px)
+    w_px, h_px = parse_pair(px, int) if px else (None, None)
+    return Rig(focal, w_mm, h_mm, w_px, h_px)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+async def show_framing(target: str, mosaic: str = "1x1", rotation: float = 0,
+                       overlap_pct: float = 10, focal_mm: float | None = None,
+                       sensor_mm: str | None = None, sensor_px: str | None = None,
+                       ra_h: float | None = None, dec_deg: float | None = None) -> list:
+    """Frame a target in Telescopius' Telescope Simulator with the configured rig, in a
+    visible browser window on this machine, and return a screenshot of the framing.
+
+    target: object name (resolved via the API, e.g. "IC 1805", "Heart Nebula"); with
+    ra_h/dec_deg given, it is only a label. mosaic: "COLSxROWS", e.g. "2x2".
+    rotation: camera angle in degrees. focal_mm / sensor_mm ("11.136x6.264") /
+    sensor_px ("3840x2160") override the default rig for this call.
+    The window stays open for hands-on adjustment; close_framing closes it.
+    """
+    rig = _rig(focal_mm, sensor_mm, sensor_px)
+    cols, rows = parse_pair(mosaic, int)
+    label = target
+    if ra_h is None or dec_deg is None:
+        found = (await target_info(target)).get("results") or []
+        if not found:
+            raise ValueError(f"Telescopius found no target matching {target!r}.")
+        hit = found[0]
+        ra_h, dec_deg = hit["ra_h"], hit["dec_deg"]
+        label = " / ".join(x for x in (hit.get("id"), hit.get("name")) if x) or target
+    info = await _browser().show(label=label, ra_h=ra_h, dec_deg=dec_deg, rig=rig,
+                                 rotation=rotation, cols=cols, rows=rows, overlap_pct=overlap_pct)
+    return [json.dumps(info, indent=1), Image(path=info["screenshot"])]
+
+
+@mcp.tool(annotations=_READ_ONLY)
+async def close_framing() -> str:
+    """Close the framing browser window opened by show_framing."""
+    global _framing
+    if _framing is None:
+        return "No framing window open."
+    await _framing.close()
+    _framing = None
+    return "Framing window closed."
 
 
 @mcp.tool(annotations=_READ_ONLY)

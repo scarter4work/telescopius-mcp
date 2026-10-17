@@ -6,8 +6,9 @@ sky times, astronomy weather, events, and the account's observing lists and equi
 ## Setup
 
 ```bash
-uv venv .venv && uv pip install --python .venv/bin/python -e '.[dev]'
-cp .env.example .env   # add your API key (Telescopius → Settings → API Keys) and home location
+uv venv .venv && uv pip install --python .venv/bin/python -e '.[dev,framing]'
+.venv/bin/patchright install chromium   # only for show_framing
+cp .env.example .env   # add your API key (Telescopius → Settings → API Keys), home location, default rig
 claude mcp add --scope user telescopius -- "$PWD/.venv/bin/telescopius-mcp"
 ```
 
@@ -27,6 +28,19 @@ The server reads `TELESCOPIUS_*` from the environment first, then from `.env` be
 | `astro_events`, `event_highlights` | `/events/calendar`, `/events/highlights` |
 | `my_equipment` | `/equipment/user` |
 | `astro_news` | `/news/global` |
+| `show_framing`, `close_framing` | Telescope Simulator in a browser window; returns a screenshot |
+
+### Framing
+
+`show_framing("Heart Nebula", mosaic="2x2", rotation=0)` resolves the target through the API, opens
+Telescopius' Telescope Simulator framed with your rig, and returns the framing as a JPEG (also saved under
+`~/.local/share/telescopius-mcp/framings/`). The window stays open for hands-on tweaking. The default rig
+comes from `TELESCOPIUS_FOCAL_MM` / `TELESCOPIUS_SENSOR_MM` / `TELESCOPIUS_SENSOR_PX`; any call can override it.
+
+It needs a desktop session. Cloudflare returns 403 to stock Playwright and to every headless browser, so
+it drives [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python) in a headed window. The
+simulator keeps its scope and camera settings in `localStorage` (`_telescope_simulator_*`), which the tool
+seeds before loading. Mosaic size isn't persisted, so the tool sets it on the live element.
 
 Target results are trimmed to planning fields (pass `raw=True` for the full payload).
 

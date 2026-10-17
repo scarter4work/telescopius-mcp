@@ -18,6 +18,9 @@ class Config:
     lat: float | None
     lon: float | None
     timezone: str | None
+    focal_mm: float | None = None
+    sensor_mm: str | None = None   # "WIDTHxHEIGHT", e.g. "11.136x6.264"
+    sensor_px: str | None = None   # "WIDTHxHEIGHT", e.g. "3840x2160"
 
     def location(self) -> dict:
         """Default observer location; empty when unset, so the API falls back to IP geolocation."""
@@ -58,4 +61,7 @@ def load_config(env_file: Path | None = None) -> Config:
         lat=float(lat) if lat else None,
         lon=float(lon) if lon else None,
         timezone=get("TELESCOPIUS_TZ"),
+        focal_mm=float(get("TELESCOPIUS_FOCAL_MM")) if get("TELESCOPIUS_FOCAL_MM") else None,
+        sensor_mm=get("TELESCOPIUS_SENSOR_MM"),
+        sensor_px=get("TELESCOPIUS_SENSOR_PX"),
     )
